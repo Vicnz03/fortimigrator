@@ -1,0 +1,18 @@
+config vdom
+edit {{vdom}}
+config firewall vip
+{% for key, value in data.items() %}
+edit {{ key }}
+set extip {{ value['extip'] }}
+set extintf any
+set mappedip {{ value['mappedip'] }}
+{% if value['portforward'] %}
+set portforward enable
+set extport {{ value['extport'] }}
+set mappedport {{ value['mappedport'] }}
+{% endif %}
+next
+next
+{% endfor %}
+end
+end

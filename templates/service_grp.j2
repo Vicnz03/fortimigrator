@@ -1,0 +1,11 @@
+config vdom
+edit {{vdom}}
+config firewall service group
+{% for key, value in data.items() %}
+edit {{ key }}
+set member {{ value }}
+next
+
+{% endfor %}
+end
+end

@@ -1,0 +1,15 @@
+config vdom
+edit {{vdom}}
+config firewall address
+{% for key, value in data.items() %}
+edit {{ key }}
+set startip {{ value }}
+set endip {{ value }}
+{% if 'static' in key %}
+set type one-to-one
+{% endif %}
+next
+
+{% endfor %}
+end
+end

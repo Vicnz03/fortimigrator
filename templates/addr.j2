@@ -1,0 +1,11 @@
+config vdom
+edit {{vdom}}
+config firewall address
+{% for key, value in data.items() %}
+edit {{ key }}
+set subnet {{ value }}
+next
+
+{% endfor %}
+end
+end

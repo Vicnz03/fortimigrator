@@ -1,0 +1,13 @@
+config vdom
+edit {{vdom}}
+config router static
+{% set i = index-1 %}
+{% for key, value in data.items() %}
+edit {{ i + loop.index}}
+set dst {{ key | replace("/"," ") }}
+set device {{ value }}
+next
+{% endfor %}
+{% endfor %}
+end
+end

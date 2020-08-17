@@ -1,0 +1,21 @@
+config vdom
+edit {{vdom}}
+config firewall policy
+{% for value in data %}
+edit {{ value['index'] }}
+set srcintf {{ value['srcintf'] }}
+set dstintf {{ value['dstintf'] }}
+set src {{ value['srcaddr'] }}
+set dst {{ value['dstaddr'] }}
+set service {{ value['service'] }}
+set action {{ value['action'] }}
+set sechdule always
+set logtraffic all
+set global-label {{ value['label'] }}
+set comments {{ value['comments'] }}
+set status {{ value['status'] }}
+next
+
+{% endfor %}
+end
+end

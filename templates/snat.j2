@@ -1,0 +1,23 @@
+config vdom
+edit {{vdom}}
+config firewall central-snat-map
+{% for value in data %}
+edit {{ value['index'] }}
+set orig-addr {{ value['orig-addr'] }}
+set srcintf {{ value['srcintf'] }}
+set dst-addr {{ value['dst-addr'] }}
+set dstintf {{ value['dstintf'] }}
+{% if value['portforward'] %}
+set orig-port {{ value['orig-port'] }}
+set nat-port {{ value['nat-port'] }}
+{% endif %}
+{% if value['disable'] %}
+set nat disable
+{% else %}
+set nat-ippool {{ value['nat-ippool'] }}
+{% endif %}
+next
+
+{% endfor %}
+end
+end
