@@ -35,11 +35,9 @@ snat_index = 1
 access_group = {}
 policy_list = []
 asa_port = {}
-#intf = namedtuple('intf', 'intf_name nameif ip')
-nat_commnent = ', Natted from {} to {}'
 
-
-
+#convert service from name to port NO
+#http -> 80
 def check_port(port):
     try:
         int(port)
@@ -47,11 +45,15 @@ def check_port(port):
         port = asa_port[port]
     
     return port    
-
+#check if port exists in service list, if not , add it
+#tcp, 80 -> tcp-80
 def check_service(proto,port):
+    #tcp-udp
     proto = proto.replace(' ','-')
     
+    #range 1_2
     ports = [check_port(p) for p in port.split('_')]
+    #tcp-1_2
     name = proto+'-'+'_'.join(ports)
     if name not in service_list:
         if '-' in proto:
@@ -63,6 +65,8 @@ def check_service(proto,port):
 
     return name
 
+#check if addr exists in addr list, if not, add it
+#192.168.1.1 255.255.255.255 -> h-192.168.1.1
 def check_addr(addr):
     pre_len = IPv4Network((0,addr.split()[1])).prefixlen
     if pre_len == 32:
@@ -77,6 +81,7 @@ def check_addr(addr):
 
 def analyze_acl(srcintf,acl,permit_only = 0):
     srcip = dstip = proto = ''
+    nat_commnent = ', Natted from {} to {}'
     result = []
     for line in acl:
         lines = line.split()
@@ -181,7 +186,6 @@ def analyze_acl(srcintf,acl,permit_only = 0):
 
 def prebuild(asa_config):
     global snat_index
-    ser_name = 'start'
     objects = []
     re_obj_grp = re.compile('^object-group ')
     re_intf = re.compile('^interface ')
@@ -193,14 +197,38 @@ def prebuild(asa_config):
     re_global_nat_dst = re.compile('^global ')
     re_subline = re.compile('^ ')
     re_end = re.compile('^!')
-    intf_start_flag = obj_start_flag = obj_ser_flag = 0
-    obj_net_flag = 1
+    intf_start_flag = obj_start_flag = 0
+
     for line in asa_config:
         lines = line.split()
         if re_intf.match(line):
             if not intf_start_flag:
                 intf_start_flag = 1
                 intf_name = lines[1]
+
+        if re_obj_grp.match(line):
+            if len(objects) != 0:
+                if obj_net_flag:
+                    obj_net_grp[ser_name] = ' '.join(objects)
+                elif obj_ser_flag:
+                    obj_ser_grp[ser_name] = ' '.join(objects)
+                elif obj_proto_flag:
+                    obj_proto_grp[ser_name] = ' '.join(objects)
+
+            obj_start_flag = 1
+            obj_ser_flag = obj_net_flag = obj_proto_flag = 0
+            ser_name = lines[2]
+            objects = []
+            if 'object-group protocol' in line:
+                obj_proto_flag = 1
+            elif ' service ' in line:
+                obj_ser_flag = 1
+                if len(line.split()) == 4:
+                    l4_type = line.split()[3]
+                else:
+                    l4_type = 'unknow'
+            elif ' network ' in line:
+                obj_net_flag = 1
 
         if re_subline.match(line):
             if intf_start_flag:
@@ -260,8 +288,6 @@ def prebuild(asa_config):
                     elif obj_proto_flag:
                         objects.append(lines[1])
 
-
-
         if re_end.match(line):
             if intf_start_flag:
                 intf[nameif] = {
@@ -269,33 +295,6 @@ def prebuild(asa_config):
                     'ip': intf_ip
                 }
                 intf_start_flag = 0
-
-
-        if re_obj_grp.match(line):
-            if len(objects) != 0:
-                if obj_net_flag:
-                    obj_net_grp[ser_name] = ' '.join(objects)
-                elif obj_ser_flag:
-                    obj_ser_grp[ser_name] = ' '.join(objects)
-                elif obj_proto_flag:
-                    obj_proto_grp[ser_name] = ' '.join(objects)
-
-            obj_start_flag = 1
-            obj_ser_flag = 0
-            obj_net_flag = 0 
-            obj_proto_flag = 0
-            ser_name = lines[2]
-            objects = []
-            if 'object-group protocol' in line:
-                obj_proto_flag = 1
-            elif ' service ' in line:
-                obj_ser_flag = 1
-                if len(line.split()) == 4:
-                    l4_type = line.split()[3]
-                else:
-                    l4_type = 'unknow'
-            elif ' network ' in line:
-                obj_net_flag = 1
 
         if not re_subline.match(line) and obj_start_flag and not re_obj_grp.match(line):
             obj_start_flag = 0
@@ -305,7 +304,6 @@ def prebuild(asa_config):
                 acl_name = lines[1]
                 if acl_name not in acl_list:
                     acl_list[acl_name] = []
-
                 else:
                     acl_list[acl_name].append(line)
 
@@ -333,7 +331,6 @@ def prebuild(asa_config):
                     out_intf: [pool_name]
                 }
 
-        #08082020 11:30 pm
         if re_global_nat_src.match(line):
             in_intf = lines[1].strip('(').strip(')')
             seq = lines[2]
@@ -427,11 +424,12 @@ def build_glb_nat():
                     if '0.0.0.0' in src:
                         src = 'any'
                     dstip = 'any'
-                    acl_detail=[asa_acl(src,'any','any','0','any','0','permit','SNAT','enable')]
+                    acl_detail=[asa_acl(in_intf,'any',src,'0','any','0','permit','SNAT','enable')]
                 else:
                     acl_detail = analyze_acl(in_intf,acl_list[src])
 
                 for asa in acl_detail:
+                    #nat0
                     if seq == '0':
                         snat_list.append({
                             'index': str(snat_index),
