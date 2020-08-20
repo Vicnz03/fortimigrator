@@ -1,11 +1,11 @@
 config vdom
 edit {{vdom}}
-config firewall address
+config firewall ippool
 {% for key, value in data.items() %}
 edit {{ key }}
-set startip {{ value }}
-set endip {{ value }}
-{% if 'static' in key %}
+set startip {{ value['start_ip'] }}
+set endip {{ value['end_ip'] }}
+{% if value['netmask'] == 32 and 'static' in key %}
 set type one-to-one
 {% endif %}
 next

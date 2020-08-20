@@ -156,7 +156,10 @@ def analyze_acl(srcintf, acl, permit_only=0):
                         'tcp-'+str(x) for x in range(int(s_port), int(e_port))]
 
         elif dstport == '0':
-            dstport = proto.upper()
+            if proto.upper() == 'IP':
+                dstport = 'all'
+            else:
+                dstport = proto.upper()
             dstport_details = 'all'
 
         orig_status = 'enable'
@@ -164,11 +167,11 @@ def analyze_acl(srcintf, acl, permit_only=0):
         if not src_dst['dstip'].startswith('n-') and src_dst['dstip'] != 'any':
             if src_dst['dstip'].startswith('h-'):
                 dips = [src_dst['dstip'].split('-')[1]]
-                no_change = 1
+                no_change = 0
             else:
                 dips = [net for net in obj_net_grp[src_dst['dstip']
                                                    ].split() if net.startswith('h-')]
-                no_change = 0
+                no_change = 1
 
             for dip in dips:
                 NAT_target = srcintf+'#'+dip
@@ -257,7 +260,8 @@ def prebuild(asa_config):
                 if 'nameif' in line:
                     nameif = lines[1]
                 elif 'ip address' in line:
-                    intf_ip = ip.format(lines[2], lines[3])
+                    intf_ip = ip.format(lines[2], '255.255.255.255')
+                    netmask = lines[3]
 
             if obj_start_flag:
                 if '-object ' in line:
@@ -317,18 +321,27 @@ def prebuild(asa_config):
             if intf_start_flag:
                 intf[nameif] = {
                     'intf_name': intf_name,
-                    'ip': intf_ip
+                    'ip': intf_ip,
+                    'netmask': netmask,
                 }
                 intf_start_flag = 0
 
         if not re_subline.match(line) and obj_start_flag and not re_obj_grp.match(line):
+            if len(objects) != 0:
+                if obj_net_flag:
+                    obj_net_grp[ser_name] = ' '.join(objects)
+                elif obj_ser_flag:
+                    obj_ser_grp[ser_name] = ' '.join(objects)
+                elif obj_proto_flag:
+                    obj_proto_grp[ser_name] = ' '.join(objects)
+
             obj_start_flag = 0
 
         if re_acl.match(line):
             if 'remark' not in line:
                 acl_name = lines[1]
                 if acl_name not in acl_list:
-                    acl_list[acl_name] = []
+                    acl_list[acl_name] = [line]
                 else:
                     acl_list[acl_name].append(line)
 
@@ -337,13 +350,26 @@ def prebuild(asa_config):
             seq = lines[2]
             if lines[3] == 'interface':
                 pool_ip = intf[out_intf]['ip'].split()[0]
+                netmask = '255.255.255.255'
 
             else:
                 pool_ip = lines[3]
+                netmask = lines[5]
 
-            pool_name = 'pool_'+pool_ip
+            pool_net = IPv4Network('{}/{}'.format(pool_ip,netmask))
+            pool_name = 'pool_'+pool_ip+'_' + str(pool_net.prefixlen) 
+            if pool_net.prefixlen == 32:
+                start_ip = end_ip = pool_ip
+            else:
+                start_ip = pool_net[1]
+                end_ip = pool_net[-1]
+                
             if pool_name not in ip_pool:
-                ip_pool[pool_name] = pool_ip
+                ip_pool[pool_name] = {
+                    'start_ip': start_ip,
+                    'end_ip': end_ip,
+                    'netmask': pool_net.prefixlen,
+                }
 
             if seq in global_nat_dst:
                 if out_intf in global_nat_dst[seq]:
@@ -360,6 +386,7 @@ def prebuild(asa_config):
             in_intf = lines[1].strip('(').strip(')')
             seq = lines[2]
             if lines[3] == 'access-list':
+                #nat_src = analyze_acl(in_intf, acl_list[[lines4]])
                 nat_src = lines[4]
             else:
                 nat_src = check_addr(ip.format(lines[3], lines[4]))
@@ -387,6 +414,7 @@ def prebuild(asa_config):
                 nat = 'NAT_{}_{}'.format(in_ip, out_ip)
                 portforward = False
                 out_port = in_port = 0
+                netmask = lines[5]
                 bi_vip_list[out_intf+'#'+out_ip] = in_intf+'#' + in_ip
             else:
                 out_ip = lines[3]
@@ -399,11 +427,23 @@ def prebuild(asa_config):
                 nat = 'PAT_{}_{}_{}_{}'.format(
                     in_ip, in_port, out_ip, out_port)
                 portforward = True
+                netmask = lines[8]
                 bi_vip_list[out_intf+'#'+out_ip+'#' +
                             out_port] = in_intf+'#' + in_ip+'#' + in_port
-            pool_name = 'static_pool_'+out_ip
+            pool_net = IPv4Network('{}/{}'.format(out_ip,netmask))
+            pool_name = 'static_pool_'+out_ip+'_' + str(pool_net.prefixlen) 
+            if pool_net.prefixlen == 32:
+                start_ip = end_ip = out_ip
+            else:
+                start_ip = pool_net[1]
+                end_ip = pool_net[-1]
+                
             if pool_name not in ip_pool:
-                ip_pool[pool_name] = out_ip
+                ip_pool[pool_name] = {
+                    'start_ip': start_ip,
+                    'end_ip': end_ip,
+                    'netmask': pool_net.prefixlen,
+                }
 
             vip_list[nat] = {
                 'extintf': out_intf,
@@ -420,7 +460,7 @@ def prebuild(asa_config):
                     'index': str(snat_index),
                     'orig-addr': in_ip,
                     'srcintf': in_intf,
-                    'dst-addr': out_ip,
+                    'dst-addr': 'any',
                     'dstintf': out_intf,
                     'nat-ippool': pool_name,
                     'portforward': portforward,
@@ -521,6 +561,11 @@ def build_intf_policy():
 
 
 if __name__ == '__main__':
+    vdom = 'Pegasus'
+    output = 'output/'+ vdom
+    if not os.path.isdir(output):
+        os.makedirs(output)
+
     loader = jinja2.FileSystemLoader(os.getcwd() + '/templates')
     jenv = jinja2.Environment(
         loader=loader, trim_blocks=True, lstrip_blocks=True)
@@ -545,8 +590,10 @@ if __name__ == '__main__':
 
     compents = [c_addr, c_service, c_addrgrp,
                 c_sergrp, c_ippool, c_vip, c_snat, c_policy]
+
+    
     for compent in compents:
-        file_name = 'forticonvert_{}.txt'.format(compent.name)
+        file_name = 'output/{}/forticonvert_{}.txt'.format(vdom,compent.name)
         with open(file_name, 'w') as f:
             f.write(jenv.get_template(compent.template).render(
-                data=compent.data, vdom='Pegasus'))
+                data=compent.data, vdom=vdom))
